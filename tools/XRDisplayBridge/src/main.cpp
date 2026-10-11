@@ -12,12 +12,18 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <atomic>
+#include <mutex>
+#include <span>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 void Check(XrResult result, const char *operation) {
@@ -37,6 +43,37 @@ bool HasExtension(const char *wanted) {
     return std::strcmp(e.extensionName, wanted) == 0;
   });
 }
+
+struct StereoFrame { std::uint32_t width{}, height{}; std::vector<std::uint8_t> rgba; std::uint64_t generation{}; };
+class StereoStreamClient {
+public:
+  StereoStreamClient() : worker_([this](std::stop_token stop) { Run(stop); }) {}
+  ~StereoStreamClient() { worker_.request_stop(); const int fd = socket_.exchange(-1); if (fd >= 0) { shutdown(fd, SHUT_RDWR); close(fd); } }
+  bool Poll(StereoFrame &frame) { std::scoped_lock lock(mutex_); if (generation_ == consumed_) return false; frame = latest_; consumed_ = generation_; return true; }
+private:
+  static bool ReceiveAll(int fd, std::span<std::uint8_t> bytes) { std::size_t received = 0; while (received < bytes.size()) { const auto n = recv(fd, bytes.data() + received, bytes.size() - received, 0); if (n <= 0) return false; received += static_cast<std::size_t>(n); } return true; }
+  static std::uint32_t ReadU32(const std::uint8_t *bytes) { std::uint32_t value{}; std::memcpy(&value, bytes, sizeof(value)); return ntohl(value); }
+  void Run(std::stop_token stop) {
+    using namespace std::chrono_literals;
+    while (!stop.stop_requested()) {
+      const int fd = socket(AF_INET, SOCK_STREAM, 0);
+      if (fd < 0) { std::this_thread::sleep_for(500ms); continue; }
+      socket_.store(fd);
+      sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(4245); inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+      if (connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) { close(fd); socket_.store(-1); std::this_thread::sleep_for(500ms); continue; }
+      while (!stop.stop_requested()) {
+        std::array<std::uint8_t, 20> header{};
+        if (!ReceiveAll(fd, header) || std::memcmp(header.data(), "ARXR", 4) != 0) break;
+        StereoFrame frame; const auto eye = header[4]; frame.width = ReadU32(header.data() + 8); frame.height = ReadU32(header.data() + 12); const auto size = ReadU32(header.data() + 16);
+        if (eye > 1 || !frame.width || !frame.height || size != std::uint64_t(frame.width) * frame.height * 4U) break;
+        frame.rgba.resize(size); if (!ReceiveAll(fd, frame.rgba)) break;
+        if (eye == 0) { std::scoped_lock lock(mutex_); frame.generation = ++generation_; latest_ = std::move(frame); }
+      }
+      if (socket_.exchange(-1) == fd) close(fd);
+    }
+  }
+  std::jthread worker_; std::atomic_int socket_{-1}; std::mutex mutex_; StereoFrame latest_; std::uint64_t generation_{}, consumed_{};
+};
 
 class Bridge {
 public:
@@ -63,6 +100,10 @@ public:
       if (rfb_.Poll(incoming)) {
         AcceptFrame(std::move(incoming));
       }
+      StereoFrame stereo;
+      if (stereo_.Poll(stereo)) {
+        AcceptStereoFrame(std::move(stereo));
+      }
       if (running_)
         RenderFrame();
       else
@@ -84,6 +125,15 @@ private:
       std::copy_n(incoming.rgba.data() +
                       std::size_t(incoming.height - 1U - y) * rowBytes,
                   rowBytes, frame_.rgba.data() + std::size_t(y) * rowBytes);
+  }
+  void AcceptStereoFrame(StereoFrame incoming) {
+    if (frame_.width != incoming.width || frame_.height != incoming.height)
+      CreateSwapchain(incoming.width, incoming.height);
+    frame_.width = incoming.width;
+    frame_.height = incoming.height;
+    frame_.generation = incoming.generation;
+    frame_.rgba = std::move(incoming.rgba);
+    std::cout << "XR Display Bridge: receiving VISR OpenXR frames on 4245\\n";
   }
   void Initialize() {
     if (!HasExtension(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME))
@@ -299,6 +349,7 @@ private:
   uint32_t swapWidth_{}, swapHeight_{};
   XrSessionState state_{XR_SESSION_STATE_UNKNOWN};
   bool running_{}, exit_{};
+  StereoStreamClient stereo_;
 };
 } // namespace
 int main() {

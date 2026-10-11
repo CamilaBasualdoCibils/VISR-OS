@@ -47,7 +47,7 @@ add_custom_target(
 )
 
 add_dependencies(build-base VisrServer VisrBoot VisrLogin VisrDesktop)
-add_dependencies(build-sandbox VisrServer VisrBoot VisrLogin VisrDesktop)
+add_dependencies(build-sandbox build-base VisrServer VisrBoot VisrLogin VisrDesktop)
 add_dependencies(run-sandbox build-sandbox)
 
 if(VISROS_BUILD_XR_DISPLAY_BRIDGE)

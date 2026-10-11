@@ -48,6 +48,7 @@ private:
     std::mutex mutex_;
     std::array<Frame, 2> pending_;
     std::uint64_t nextGeneration_ {1};
+    bool openXRTookOver_ {false};
     std::array<std::uint64_t, 2> consumedGeneration_ {};
 };
 

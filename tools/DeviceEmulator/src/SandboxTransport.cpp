@@ -91,19 +91,26 @@ SandboxTransport::~SandboxTransport() {
 }
 
 void SandboxTransport::Poll(EmulatedXRDevice& device) {
-    rfb_.Poll(device);
-    if (!xrConnected_.load()) {
-        device.SetOpenXRSessionActive(false);
-    }
+    if (!openXRTookOver_) rfb_.Poll(device);
     std::array<Frame, 2> frames;
     std::array<bool, 2> available {};
     {
         std::scoped_lock lock(mutex_);
-        for (std::size_t eye = 0; eye < pending_.size(); ++eye) {
-            if (pending_[eye].generation == consumedGeneration_[eye]) continue;
-            frames[eye] = pending_[eye];
-            consumedGeneration_[eye] = pending_[eye].generation;
-            available[eye] = true;
+        if (!openXRTookOver_) {
+            if (!pending_[0].generation || !pending_[1].generation) return;
+            for (std::size_t eye = 0; eye < pending_.size(); ++eye) {
+                frames[eye] = pending_[eye];
+                consumedGeneration_[eye] = pending_[eye].generation;
+                available[eye] = true;
+            }
+            openXRTookOver_ = true;
+        } else {
+            for (std::size_t eye = 0; eye < pending_.size(); ++eye) {
+                if (pending_[eye].generation == consumedGeneration_[eye]) continue;
+                frames[eye] = pending_[eye];
+                consumedGeneration_[eye] = pending_[eye].generation;
+                available[eye] = true;
+            }
         }
     }
     if (!available[0] && !available[1]) return;

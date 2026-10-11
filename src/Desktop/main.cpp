@@ -19,9 +19,9 @@ int main() {
     std::signal(SIGINT, Stop);
     std::signal(SIGTERM, Stop);
     auto presentation = VISROS::ConnectPresentationController();
-    VISROS::ShowSystemExperience(*presentation, "VISR OS Desktop");
+   /*  VISROS::ShowSystemExperience(*presentation, "VISR OS Desktop");
     VISROS::Desktop::Manager manager;
-    manager.Start();
+    manager.Start(); */
     while (running)
       std::this_thread::sleep_for(std::chrono::seconds{1});
     return 0;

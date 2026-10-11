@@ -25,13 +25,4 @@ ConnectPresentationController() {
       host, port);
 }
 
-inline void ShowSystemExperience(VISR::Presentation::IPresentationController &controller,
-                                 std::string label) {
-  using namespace VISR::Language;
-  Style style;
-  style.width = {1.0, LengthUnit::Meter};
-  style.height = {0.75, LengthUnit::Meter};
-  style.zOffset = {-2.0, LengthUnit::Meter};
-  controller.SetActiveTree(LSurface({LText(std::move(label))}, {}, std::move(style)));
-}
 } // namespace VISROS
